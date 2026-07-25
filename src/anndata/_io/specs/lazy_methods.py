@@ -128,23 +128,60 @@ def read_sparse_as_dask(
     _reader: LazyReader,
     chunks: tuple[int, ...] | None = None,  # only tuple[int, int] is supported here
 ) -> DaskArray:
+    from anndata._lesson7_narrate import narrate
+
     import dask.array as da
 
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: enter",
+        elem_type=type(elem).__name__,
+        encoding_type=elem.attrs.get("encoding-type"),
+        shape=tuple(elem.attrs.get("shape", ())),
+        chunks_arg=chunks,
+    )
+
+    # HDF5 → path; zarr → sparse_dataset wrapper over on-disk CSC/CSR arrays.
     path_or_sparse_dataset = (
         Path(filename(elem))
         if isinstance(elem, H5Group)
         else ad.io.sparse_dataset(elem, should_cache_indptr=False)
     )
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: opened sparse source",
+        source_type=type(path_or_sparse_dataset).__name__,
+    )
     elem_name = get_elem_name(elem)
     shape: tuple[int, int] = tuple(elem.attrs["shape"])
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: matrix shape from attrs",
+        elem_name=elem_name,
+        shape=shape,
+    )
     if isinstance(path_or_sparse_dataset, CSRDataset | CSCDataset):
         dtype = path_or_sparse_dataset.dtype
     else:
         dtype = elem["data"].dtype
     is_csc: bool = elem.attrs["encoding-type"] == "csc_matrix"
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: format/dtype",
+        is_csc=is_csc,
+        dtype=str(dtype),
+    )
 
+    # Default major-axis stride (1000); CSC major axis is columns (genes).
     stride: int = _DEFAULT_STRIDE
     major_dim, minor_dim = (1, 0) if is_csc else (0, 1)
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: major/minor axes",
+        major_dim=major_dim,
+        minor_dim=minor_dim,
+        default_stride=stride,
+    )
     if chunks is not None:
         if len(chunks) != 2:
             msg = "`chunks` must be a tuple of two integers"
@@ -160,6 +197,12 @@ def read_sparse_as_dask(
             if chunks[major_dim] not in {None, -1}
             else shape[major_dim]
         )
+        narrate(
+            "anndata",
+            "read_sparse_as_dask: applied caller chunks → stride",
+            chunks=chunks,
+            stride=stride,
+        )
 
     shape_minor, shape_major = shape if is_csc else shape[::-1]
     chunks_major = compute_chunk_layout_for_axis_size(stride, shape_major)
@@ -167,13 +210,34 @@ def read_sparse_as_dask(
     chunk_layout = (
         (chunks_minor, chunks_major) if is_csc else (chunks_major, chunks_minor)
     )
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: computed dask chunk_layout",
+        shape_minor=shape_minor,
+        shape_major=shape_major,
+        chunks_major=chunks_major,
+        chunk_layout=chunk_layout,
+    )
     memory_format = sparse.csc_matrix if is_csc else sparse.csr_matrix
     make_chunk = partial(make_dask_chunk, path_or_sparse_dataset, elem_name)
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: map_blocks(make_dask_chunk) — lazy graph only",
+        memory_format=memory_format.__name__,
+    )
     da_mtx = da.map_blocks(
         make_chunk,
         dtype=dtype,
         chunks=chunk_layout,
         meta=memory_format((0, 0), dtype=dtype),
+    )
+    narrate(
+        "anndata",
+        "read_sparse_as_dask: returning DaskArray",
+        shape=da_mtx.shape,
+        chunksize=da_mtx.chunksize,
+        numblocks=da_mtx.numblocks,
+        meta_type=type(da_mtx._meta).__name__,
     )
     return da_mtx
 

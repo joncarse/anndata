@@ -514,7 +514,39 @@ def read_elem_lazy(
     >>> adata.X = ad.experimental.read_elem_lazy(g["X"], chunks=(500, -1))
     >>> adata.X = ad.experimental.read_elem_lazy(g["X"], chunks=(500, None))
     """
-    return LazyReader(_LAZY_REGISTRY).read_elem(elem, chunks=chunks, **kwargs)
+    from anndata._lesson7_narrate import narrate
+
+    # Lesson-7 learning: show encoding attrs before registry dispatch.
+    enc_type = None
+    enc_ver = None
+    shape_attr = None
+    try:
+        enc_type = _read_attr(elem.attrs, "encoding-type")
+        enc_ver = _read_attr(elem.attrs, "encoding-version")
+        shape_attr = elem.attrs.get("shape")
+    except Exception:  # noqa: BLE001 — narration only
+        pass
+    narrate(
+        "anndata",
+        "read_elem_lazy: enter (dispatch via LazyReader)",
+        elem_type=type(elem).__name__,
+        encoding_type=enc_type,
+        encoding_version=enc_ver,
+        shape_attr=shape_attr,
+        chunks=chunks,
+        kwargs_keys=tuple(kwargs.keys()),
+    )
+    result = LazyReader(_LAZY_REGISTRY).read_elem(elem, chunks=chunks, **kwargs)
+    narrate(
+        "anndata",
+        "read_elem_lazy: registry returned lazy structure",
+        result_type=type(result).__name__,
+        result_shape=getattr(result, "shape", None),
+        result_chunksize=getattr(result, "chunksize", None),
+        result_numblocks=getattr(result, "numblocks", None),
+        meta_type=type(getattr(result, "_meta", None)).__name__,
+    )
+    return result
 
 
 def write_elem(
