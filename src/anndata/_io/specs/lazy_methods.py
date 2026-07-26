@@ -128,18 +128,32 @@ def read_sparse_as_dask(
     _reader: LazyReader,
     chunks: tuple[int, ...] | None = None,  # only tuple[int, int] is supported here
 ) -> DaskArray:
-    from anndata._lesson7_narrate import narrate
-
     import dask.array as da
 
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: enter",
-        elem_type=type(elem).__name__,
-        encoding_type=elem.attrs.get("encoding-type"),
-        shape=tuple(elem.attrs.get("shape", ())),
-        chunks_arg=chunks,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: You have entered the sparse→dask conversion path.
+    # --- lecture ---
+    # You have entered the sparse→dask conversion path. The element on disk
+    # is a compressed sparse matrix (CSC or CSR) stored as the usual three
+    # arrays: data (nonzero values), indices, and indptr.
+    #
+    # We will wrap that on-disk sparse object in a Dask array made of
+    # map_blocks tasks. Each future task will know how to read one strip of
+    # the sparse matrix when compute() asks for it.
+    #
+    # For CSC, the "major" axis is columns (genes). That is why gene-wise
+    # chunking feels natural here: a CSC column strip is exactly "all cells
+    # for these genes", which is what HVG wants.
+    # --- facts at this step ---
+    #   elem_type = 'Group'
+    #   encoding_type = 'csc_matrix'
+    #   shape = (68579, 2000)
+    #   chunks_arg = None
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
 
     # HDF5 → path; zarr → sparse_dataset wrapper over on-disk CSC/CSR arrays.
     path_or_sparse_dataset = (
@@ -147,41 +161,105 @@ def read_sparse_as_dask(
         if isinstance(elem, H5Group)
         else ad.io.sparse_dataset(elem, should_cache_indptr=False)
     )
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: opened sparse source",
-        source_type=type(path_or_sparse_dataset).__name__,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: We now have a handle on the sparse dataset.
+    # --- lecture ---
+    # We now have a handle on the sparse dataset. For Zarr this is typically
+    # an AnnData CSCDataset/CSRDataset wrapper around the on-disk arrays.
+    # For HDF5 it may be a path plus element name used to reopen the file
+    # inside worker tasks.
+    #
+    # Either way, think of this object as a "bookmark" to the sparse matrix,
+    # not as the matrix contents themselves.
+    # --- facts at this step ---
+    #   source_type = '_CSCDataset'
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
     elem_name = get_elem_name(elem)
     shape: tuple[int, int] = tuple(elem.attrs["shape"])
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: matrix shape from attrs",
-        elem_name=elem_name,
-        shape=shape,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Shape comes from AnnData's stored attributes: (n_obs, n_vars), that is (cells, genes).
+    # --- lecture ---
+    # Shape comes from AnnData's stored attributes: (n_obs, n_vars), that is
+    # (cells, genes). For a Lesson 7 gene-block file this is often something
+    # like (2700, 2000): every cell, but only one gene strip. We trust this
+    # metadata so Dask can build a graph with the right overall dimensions
+    # before any chunk is read.
+    # --- facts at this step ---
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
     if isinstance(path_or_sparse_dataset, CSRDataset | CSCDataset):
         dtype = path_or_sparse_dataset.dtype
     else:
         dtype = elem["data"].dtype
     is_csc: bool = elem.attrs["encoding-type"] == "csc_matrix"
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: format/dtype",
-        is_csc=is_csc,
-        dtype=str(dtype),
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Format matters.
+    # --- lecture ---
+    # Format matters. CSC (Compressed Sparse Column) organizes nonzeros by
+    # column; CSR organizes them by row. Lesson 7 cares about CSC because we
+    # want gene (column) strips.
+    #
+    # dtype is the numeric type of the stored nonzero values (often float32
+    # for counts that were cast at write time).
+    # --- facts at this step ---
+    #   is_csc = True
+    #   dtype = 'float32'
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    #   dtype = dtype('<f4')
+    #   is_csc = True
 
     # Default major-axis stride (1000); CSC major axis is columns (genes).
     stride: int = _DEFAULT_STRIDE
     major_dim, minor_dim = (1, 0) if is_csc else (0, 1)
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: major/minor axes",
-        major_dim=major_dim,
-        minor_dim=minor_dim,
-        default_stride=stride,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Sparse matrices have a major axis (the one the compression walks along) and a minor axis.
+    # --- lecture ---
+    # Sparse matrices have a major axis (the one the compression walks
+    # along) and a minor axis. For CSC, major_dim=1 means columns/genes.
+    # The default stride (commonly 1000) means: "unless the caller says
+    # otherwise, make major-axis chunks about 1000 wide".
+    #
+    # The minor axis must stay unchunked for this reader — you cannot ask
+    # for arbitrary 2D tiles of CSC/CSR the way you can with dense arrays.
+    # That restriction is why the error message below talks about only
+    # chunking the major axis.
+    # --- facts at this step ---
+    #   major_dim = 1
+    #   minor_dim = 0
+    #   default_stride = 1000
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    #   dtype = dtype('<f4')
+    #   is_csc = True
+    #   stride = 1000
+    #   major_dim = 1
+    #   minor_dim = 0
     if chunks is not None:
         if len(chunks) != 2:
             msg = "`chunks` must be a tuple of two integers"
@@ -197,12 +275,13 @@ def read_sparse_as_dask(
             if chunks[major_dim] not in {None, -1}
             else shape[major_dim]
         )
-        narrate(
-            "anndata",
-            "read_sparse_as_dask: applied caller chunks → stride",
-            chunks=chunks,
-            stride=stride,
-        )
+        # L7-LECTURE (not hit on Lesson 7B primary gene-block path)
+        # Alternate branch unused by test_lesson7b; no live 7B values here.
+        # --- lecture ---
+        # The caller provided an explicit chunks tuple. After validating that
+        # the minor axis is "take everything", we set stride from the major
+        # axis entry. -1 or None on the major axis means "one chunk covering
+        # the whole major axis".
 
     shape_minor, shape_major = shape if is_csc else shape[::-1]
     chunks_major = compute_chunk_layout_for_axis_size(stride, shape_major)
@@ -210,35 +289,112 @@ def read_sparse_as_dask(
     chunk_layout = (
         (chunks_minor, chunks_major) if is_csc else (chunks_major, chunks_minor)
     )
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: computed dask chunk_layout",
-        shape_minor=shape_minor,
-        shape_major=shape_major,
-        chunks_major=chunks_major,
-        chunk_layout=chunk_layout,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: We translated stride + shape into a concrete Dask chunk layout: a tuple of chunk sizes along each axis.
+    # --- lecture ---
+    # We translated stride + shape into a concrete Dask chunk layout: a tuple
+    # of chunk sizes along each axis. For CSC you should see something like
+    # ((n_cells,), (gene_chunk_1, gene_chunk_2, ...)) — one full-height
+    # piece on cells, and a sequence of gene-strip widths.
+    #
+    # That layout is the map of parcels on the loading dock before anyone
+    # opens a parcel.
+    # --- facts at this step ---
+    #   shape_minor = 68579
+    #   shape_major = 2000
+    #   chunks_major = (1000, 1000)
+    #   chunk_layout = ((68579,), (1000, 1000))
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    #   dtype = dtype('<f4')
+    #   is_csc = True
+    #   stride = 1000
+    #   major_dim = 1
+    #   minor_dim = 0
+    #   shape_minor = 68579
+    #   shape_major = 2000
+    #   chunks_major = (1000, 1000)
+    #   chunks_minor = (68579,)
+    #   chunk_layout = ((68579,), (1000, 1000))
     memory_format = sparse.csc_matrix if is_csc else sparse.csr_matrix
     make_chunk = partial(make_dask_chunk, path_or_sparse_dataset, elem_name)
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: map_blocks(make_dask_chunk) — lazy graph only",
-        memory_format=memory_format.__name__,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Next we call da.map_blocks.
+    # --- lecture ---
+    # Next we call da.map_blocks. That does not read the matrix. It builds a
+    # graph of tasks, each task saying: "call make_dask_chunk for my block
+    # coordinates". make_dask_chunk is the function that, later, in a worker,
+    # opens the sparse dataset and returns one scipy sparse chunk.
+    #
+    # meta=memory_format((0,0), ...) is again a tiny empty sparse matrix used
+    # as Dask's type hint.
+    # --- facts at this step ---
+    #   memory_format = 'csc_matrix'
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    #   dtype = dtype('<f4')
+    #   is_csc = True
+    #   stride = 1000
+    #   major_dim = 1
+    #   minor_dim = 0
+    #   shape_minor = 68579
+    #   shape_major = 2000
+    #   chunks_major = (1000, 1000)
+    #   chunks_minor = (68579,)
+    #   chunk_layout = ((68579,), (1000, 1000))
+    #   memory_format = {'type': 'ABCMeta', 'shape': <property object at 0x766e49a8e520>, 'dtype': '<property object at 0x766e48ed3150>'}
     da_mtx = da.map_blocks(
         make_chunk,
         dtype=dtype,
         chunks=chunk_layout,
         meta=memory_format((0, 0), dtype=dtype),
     )
-    narrate(
-        "anndata",
-        "read_sparse_as_dask: returning DaskArray",
-        shape=da_mtx.shape,
-        chunksize=da_mtx.chunksize,
-        numblocks=da_mtx.numblocks,
-        meta_type=type(da_mtx._meta).__name__,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_sparse_as_dask  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Returning the Dask array to the caller.
+    # --- lecture ---
+    # Returning the Dask array to the caller. Remember Lesson 7's next move
+    # after this for each gene-block file: rechunk so this entire disk block
+    # becomes a single column chunk, then concatenate blocks along genes.
+    #
+    # So even if AnnData's default stride split one CSC file into several
+    # gene chunks, the tutorial loader can reassemble the contract it wants.
+    # --- facts at this step ---
+    #   shape = (68579, 2000)
+    #   chunksize = (68579, 1000)
+    #   numblocks = (1, 2)
+    #   meta_type = 'csc_matrix'
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   path_or_sparse_dataset = {'type': '_CSCDataset', 'shape': (68579, 2000), 'dtype': 'float32'}
+    #   elem_name = 'block_000'
+    #   shape = (68579, 2000)
+    #   dtype = dtype('<f4')
+    #   is_csc = True
+    #   stride = 1000
+    #   major_dim = 1
+    #   minor_dim = 0
+    #   shape_minor = 68579
+    #   shape_major = 2000
+    #   chunks_major = (1000, 1000)
+    #   chunks_minor = (68579,)
+    #   chunk_layout = ((68579,), (1000, 1000))
+    #   memory_format = {'type': 'ABCMeta', 'shape': <property object at 0x766e49a8e520>, 'dtype': '<property object at 0x766e48ed3150>'}
+    #   da_mtx = {'type': 'Array', 'shape': (68579, 2000), 'dtype': 'float32', 'numblocks': (1, 2), 'chunksize': (68579, 1000), 'meta_type': 'csc_matrix', 'meta_format': 'csc'}
     return da_mtx
 
 

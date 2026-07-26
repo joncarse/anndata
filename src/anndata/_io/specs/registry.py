@@ -514,38 +514,74 @@ def read_elem_lazy(
     >>> adata.X = ad.experimental.read_elem_lazy(g["X"], chunks=(500, -1))
     >>> adata.X = ad.experimental.read_elem_lazy(g["X"], chunks=(500, None))
     """
-    from anndata._lesson7_narrate import narrate
-
-    # Lesson-7 learning: show encoding attrs before registry dispatch.
-    enc_type = None
-    enc_ver = None
-    shape_attr = None
-    try:
-        enc_type = _read_attr(elem.attrs, "encoding-type")
-        enc_ver = _read_attr(elem.attrs, "encoding-version")
-        shape_attr = elem.attrs.get("shape")
-    except Exception:  # noqa: BLE001 — narration only
-        pass
-    narrate(
-        "anndata",
-        "read_elem_lazy: enter (dispatch via LazyReader)",
-        elem_type=type(elem).__name__,
-        encoding_type=enc_type,
-        encoding_version=enc_ver,
-        shape_attr=shape_attr,
-        chunks=chunks,
-        kwargs_keys=tuple(kwargs.keys()),
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_elem_lazy  where=anndata  pid=2237068  hits_at_site=11
+    # topic: Welcome to AnnData's lazy reader.
+    # --- lecture ---
+    # Welcome to AnnData's lazy reader. Something on disk (often a Zarr group)
+    # was encoded earlier with AnnData metadata — especially an
+    # "encoding-type" such as csc_matrix. Our job is NOT to dump the whole
+    # matrix into RAM. Our job is to look at that metadata and construct a
+    # lazy Python object (usually a Dask array) that knows how to read pieces
+    # later.
+    #
+    # Analogy: the encoding-type is the label on a shipping crate ("fragile
+    # glassware" vs "books"). The LazyReader is the warehouse clerk who reads
+    # the label and chooses the right procedure. For CSC sparse matrices the
+    # clerk will eventually call read_sparse_as_dask.
+    #
+    # The optional "chunks" argument is you telling the clerk how big each
+    # future work package should be along each axis. If you omit it, AnnData
+    # picks a default (commonly 1000 along the sparse matrix major axis).
+    # --- facts at this step ---
+    #   elem_type = 'Group'
+    #   encoding_type = 'csc_matrix'
+    #   encoding_version = '0.1.0'
+    #   shape_attr = [68579, 2000]
+    #   chunks = None
+    #   kwargs_keys = ()
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   kwargs = {}
+    #   enc_type = 'csc_matrix'
+    #   enc_ver = '0.1.0'
+    #   shape_attr = [68579, 2000]
     result = LazyReader(_LAZY_REGISTRY).read_elem(elem, chunks=chunks, **kwargs)
-    narrate(
-        "anndata",
-        "read_elem_lazy: registry returned lazy structure",
-        result_type=type(result).__name__,
-        result_shape=getattr(result, "shape", None),
-        result_chunksize=getattr(result, "chunksize", None),
-        result_numblocks=getattr(result, "numblocks", None),
-        meta_type=type(getattr(result, "_meta", None)).__name__,
-    )
+    # L7-LECTURE (real Lesson 7B run)
+    # Step-by-step lecture note — inspected values from live execution.
+    # function=read_elem_lazy  where=anndata  pid=2237068  hits_at_site=11
+    # topic: The registry dispatch finished.
+    # --- lecture ---
+    # The registry dispatch finished. You now hold a lazy structure — for
+    # Lesson 7 gene blocks, almost always a Dask array whose meta is a tiny
+    # empty CSC matrix. That meta is a type hint for Dask: "when you compute
+    # a chunk, produce something CSC-like".
+    #
+    # Critically, returning from read_elem_lazy does not mean the count
+    # values are in memory. It means the recipe exists. Actual bytes are
+    # read when a later compute forces a chunk task to run (often inside a
+    # Dask worker during HVG).
+    #
+    # Look at shape / chunksize / numblocks in the facts. Those describe the
+    # lazy layout AnnData chose for THIS element. Lesson 7's loader may still
+    # rechunk afterward so each on-disk block_* becomes exactly one column
+    # chunk.
+    # --- facts at this step ---
+    #   result_type = 'Array'
+    #   result_shape = (68579, 2000)
+    #   result_chunksize = (68579, 1000)
+    #   result_numblocks = (1, 2)
+    #   meta_type = 'csc_matrix'
+    # --- locals / object fields at the call site ---
+    #   elem = <Group file:///home/jonathan/scverse/learn/hvg_csc_dask/data/pbmc68k_geneblocks.zarr/layers/counts/block_000>
+    #   chunks = None
+    #   kwargs = {}
+    #   enc_type = 'csc_matrix'
+    #   enc_ver = '0.1.0'
+    #   shape_attr = [68579, 2000]
+    #   result = {'type': 'Array', 'shape': (68579, 2000), 'dtype': 'float32', 'numblocks': (1, 2), 'chunksize': (68579, 1000), 'meta_type': 'csc_matrix', 'meta_format': 'csc'}
     return result
 
 
